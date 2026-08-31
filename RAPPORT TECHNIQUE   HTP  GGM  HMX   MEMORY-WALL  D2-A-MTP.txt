@@ -1,0 +1,1099 @@
+╔══════════════════════════════════════════════════════════════════════════════════════╗
+║          RAPPORT TECHNIQUE — HTP / GGML / HMX / MEMORY-WALL / D2-A-MTP             ║
+║                         État expérimental au 31/08/2026                            ║
+╚══════════════════════════════════════════════════════════════════════════════════════╝
+
+STATUT : EXPÉRIMENTAL — REPRODUCTIBLE
+RUNTIME PRINCIPAL : llama.cpp fork JZ — commit 505354ed (1805)
+PLATEFORME : Qualcomm SM8850 / HTP v81
+BACKEND : GGML Hexagon / HTP
+OBJECTIF : déterminer le plafond réel d'inférence et séparer
+           CAPACITÉ MÉMOIRE / BANDE PASSANTE / PIPELINE DSP / MATMUL-HMX
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+0. RÉSUMÉ EXÉCUTIF
+──────────────────────────────────────────────────────────────────────────────────────
+
+La campagne établit désormais quatre faits expérimentaux distincts :
+
+  [1] CAPACITÉ
+      Un modèle 8B Q4_K_M peut être exécuté sur UNE SEULE session HTP0
+      avec un RSS process mesuré à ~4.97 Go.
+
+      Un modèle Qwen3.5 9B D2-A-MTP Q4_0 peut également être chargé
+      sur une seule session HTP0 en ngl=99 :
+          - construction du graphe : OK
+          - pass4.5 : OK
+          - 1831 nœuds
+          - 4 splits
+          - RSS observé au point de charge : 2.93 Go
+
+      => la valeur vmem déclarée de 3.35 Go ne doit PAS être interprétée
+         comme une limite directe du RSS observable du processus.
+
+  [2] BANDE PASSANTE / MEMORY-WALL
+      Le sweep 8B Q4_K_M donne :
+
+          ngl      TG32        ms/token
+          ───────────────────────────────
+           16       6.66         150
+           32       5.38         186
+           48       4.86         206
+           64       4.69         213
+           80       4.08         245
+
+      Ajustement :
+
+          ms/token = 1.36 × ngl + 134.8
+          R² = 0.958
+
+      => relation quasi-linéaire entre volume de couches offloadées
+         et temps de génération.
+
+      BW_eff estimée selon hypothèse de masse/couche :
+          ~81–104 GB/s
+
+      MAIS cette conversion reste dépendante de la vraie masse transférée.
+      La pente de 1.36 ms/couche est la mesure primaire fiable.
+
+  [3] MULTI-HTP
+      HTP0 / HTP1 / HTP2 sont bien accessibles.
+
+      Cependant le mode :
+
+          -dev HTP0,HTP1,HTP2
+
+      dans llama-bench ne constitue PAS un calcul parallèle unique :
+      le benchmark exécute le modèle séparément sur chaque device.
+
+      Résultats typiques :
+
+          HTP0 ≈ 5.39 t/s
+          HTP1 ≈ 5.34 t/s
+          HTP2 ≈ 4.46 t/s
+
+      Les modes :
+
+          -sm tensor
+          -sm row
+
+      n'ont produit aucun résultat exploitable (rc=0).
+
+      => aucune accélération multi-HTP parallèle démontrée sur ce build.
+
+      => les ~10–11.4 Go observés avec plusieurs sessions correspondent
+         à une capacité d'adressabilité/mapping supérieure, PAS à une
+         multiplication démontrée de la bande passante decode.
+
+  [4] PIPELINE DSP / ERR=46
+      Le 9B D2-A-MTP forcé sur HTP0 ngl=99 :
+
+          CHARGE        OK
+          GRAPH         OK
+          EXECUTION     HANG
+          op_pending    16
+          last_err      46
+          watchdog      180 s
+          CDSP après     ALIVE
+
+      Le draft-MTP produit également un pattern de hang avec :
+
+          op_pending=4
+          err=46
+
+      => forte corrélation entre certaines configurations et un blocage
+         du chemin RPC/DSP.
+
+      ATTENTION :
+      "16 ops = limite physique exacte de la file" n'est PAS encore
+      démontré. Le profil disponible ne permet pas encore d'identifier
+      avec certitude l'opération racine.
+
+      Il faut donc distinguer :
+
+          FAIT :
+              err=46 + op_pending élevé + SPIN reproductible
+
+          HYPOTHÈSE :
+              saturation de la file d'opérations in-flight
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+1. CORRECTION DU 0x80000600
+──────────────────────────────────────────────────────────────────────────────────────
+
+Symptôme initial :
+
+      failed to open domain 3 (HTP)
+      0x80000600
+
+Diagnostic initial :
+      suspicion de CDSP/NSP bloqué nécessitant power-cycle.
+
+Diagnostic corrigé :
+
+      problème d'environnement dynamique.
+
+Configuration fautive :
+
+      LD_LIBRARY_PATH contenant des chemins /vendor
+      et/ou environnement non conforme au chemin HTP attendu.
+
+Configuration fonctionnelle :
+
+      LD_LIBRARY_PATH=/data/local/tmp/npu
+      ADSP_LIBRARY_PATH=/data/local/tmp/npu
+
+      SANS ajouter /vendor dans ces chemins.
+
+Le D2-A-MTP a alors démarré réellement sur HTP0.
+
+=> Le 0x80000600 étudié dans cette campagne n'était PAS une
+   incompatibilité du modèle avec HTP.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+2. D2-A-MTP 9B — BENCHMARK HTP0
+──────────────────────────────────────────────────────────────────────────────────────
+
+Modèle :
+
+      Qwen3.5 9B D2-A-MTP
+      ~9.20 B paramètres
+      Q4_0
+      ~7.29 GiB
+
+Configuration validée :
+
+      -ngl 60
+      -dev HTP0
+      -t 6
+      -p 64
+      -n 32
+      -r 1
+
+Résultat :
+
+      PREFILL  = 225.83 t/s
+      DECODE   =   5.51 t/s
+
+Routing :
+
+      7 splits
+      ~4 splits HTP0
+      îlots CPU :
+          SCALE
+          GET_ROWS
+          MUL_MAT scales
+          lm_head / SCALE final
+
+Opérations hybrides HTP observées :
+
+      GATED_DELTA_NET
+      SSM_CONV
+      FLASH_ATTN
+      MUL_MAT
+
+Conclusion :
+
+      le modèle D2-A-MTP fonctionne effectivement sur HTP0.
+
+Contraste :
+
+      PREFILL / DECODE ≈ 41×
+
+      => prefill et decode sont dominés par des régimes différents.
+
+      Le prefill est beaucoup plus compute-efficient.
+      Le decode est fortement limité par le volume de données/token
+      et le routing.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+3. TEST ngl99 DU D2-A-MTP
+──────────────────────────────────────────────────────────────────────────────────────
+
+Configuration :
+
+      -ngl 99
+      HTP0
+      p128 dans le test initial
+
+Résultat :
+
+      PREFILL ≈ 319.7 t/s
+      DECODE = ABORT / comportement pathologique
+      durée observée ≈ 14 min
+
+Observation :
+
+      fallback CPU massif
+      split complexe
+
+Conclusion :
+
+      augmenter ngl jusqu'à 99 améliore fortement le prefill :
+
+          225.8 → 319.7 t/s
+          ≈ +41 %
+
+      mais détruit le chemin decode.
+
+      => ngl élevé n'est PAS automatiquement meilleur.
+
+Zone opérationnelle actuelle :
+
+      ngl ≤ 64
+
+      ngl=60 :
+          5.51 t/s
+          stable
+
+      ngl=99 :
+          non utilisable pour le D2 decode
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+4. CALIBRATION MEMORY-WALL — 8B Q4_K_M
+──────────────────────────────────────────────────────────────────────────────────────
+
+Calibration mono-HTP0 :
+
+      modèle :
+          Qwen 3 8B Q4_K_M
+          ~8.19 B paramètres
+          ~4.68 GiB
+
+Mesures :
+
+      +------+----------+----------+----------+
+      | ngl  | TG32     | ms/token | PP64     |
+      +------+----------+----------+----------+
+      | 16   | 6.66     | 150      | 10.45    |
+      | 32   | 5.38     | 186      | 10.42    |
+      | 48   | 4.86     | 206      | 10.42    |
+      | 64   | 4.69     | 213      |    —     |
+      | 80   | 4.08     | 245      |    —     |
+      +------+----------+----------+----------+
+
+Régression :
+
+      pente = 1.36 ms / couche
+      intercept = 134.8 ms
+      R² = 0.958
+
+Interprétation :
+
+      chaque couche supplémentaire offloadée augmente presque
+      linéairement le temps/token.
+
+      => preuve expérimentale forte d'un comportement
+         volume-bound sur cette plage.
+
+Prefill :
+
+      ≈ 10.4 t/s
+
+      presque indépendant de ngl.
+
+=> contraste :
+
+      PREFILL  : compute-bound
+      DECODE    : volume/memory-bound
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+5. BW_EFF — ESTIMATION
+──────────────────────────────────────────────────────────────────────────────────────
+
+Deux hypothèses de masse/couche ont été utilisées.
+
+Hypothèse A :
+
+      ~0.15 Go/couche
+      => BW_eff ≈ 104 GB/s
+
+Hypothèse B :
+
+      ~0.11 Go/couche
+      => BW_eff ≈ 81 GB/s
+
+Fourchette :
+
+      ~81–104 GB/s
+
+Valeur à retenir scientifiquement :
+
+      1.36 ms/couche
+
+Pourquoi ?
+
+      ngl n'est qu'un proxy du volume réel.
+
+      Les couches peuvent avoir des masses différentes.
+      Les quantifications Q4_K_M ne correspondent pas nécessairement
+      à une masse uniforme.
+      Le volume réel transféré doit être mesuré pour produire
+      une BW absolue.
+
+Conclusion :
+
+      BW_eff ~100 GB/s = ESTIMATION
+      pente 1.36 ms/couche = MESURE ROBUSTE
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+6. SINGLE-HTP0 — CAPACITÉ RÉELLE
+──────────────────────────────────────────────────────────────────────────────────────
+
+Test :
+
+      8B Q4_K_M
+      HTP0 seul
+      ngl99
+      MBUF=5000
+      pp32
+      n8
+
+Résultats :
+
+      TG8        = 6.14 t/s
+      PP32       = 10.28 t/s
+      RSS max    = 4.97 Go
+      HVX max    ≈ 54 °C
+
+Mémoire :
+
+      modèle ≈ 4.68 GiB
+      RSS ≈ 4.97 Go
+
+Observation :
+
+      vmem déclarée ≈ 3.35 Go
+
+      MAIS
+
+      RSS ≈ 4.97 Go
+
+Donc :
+
+      vmem déclarée ≠ limite directe du RSS process.
+
+
+Interprétation correcte :
+
+      HTP session
+          |
+          +-- domaine virtuel déclaré
+          |
+          +-- mappings
+          |
+          +-- buffers
+          |
+          +-- mémoire partagée
+          |
+          +-- allocations CPU/runtime
+          |
+          +-- RSS process
+
+Le RSS ne peut donc pas être assimilé directement à
+"mémoire HTP effectivement utilisée".
+
+Conclusion robuste :
+
+      le backend autorise effectivement un footprint process
+      supérieur à la vmem déclarée de 3.35 Go.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+7. TEST DÉCISIF — D2 9B SINGLE-HTP0 ngl99
+──────────────────────────────────────────────────────────────────────────────────────
+
+Configuration :
+
+      D2-A-MTP 9B Q4_0
+      HTP0 seul
+      ngl99
+      watchdog 180 s
+
+Étape 1 :
+
+      chargement             OK
+      pass4.5                OK
+      nœuds                   1831
+      splits                  4
+      RSS au point mesuré     2.93 Go
+
+Étape 2 :
+
+      exécution Mamba         FAIL
+      SPIN                    waiting
+      op_pending              16
+      last_err                46
+      watchdog                180 s
+
+Étape 3 :
+
+      CDSP                    ALIVE
+      température             39.5 °C
+      aucun dommage persistant
+
+
+Pipeline observé :
+
+      MODEL LOAD
+          |
+          v
+      GRAPH BUILD
+          |
+          v
+      MEMORY / MAPPING
+          |
+          v
+          OK
+          |
+          v
+      MAMBA EXECUTION
+          |
+          v
+      RPC / DSP
+          |
+          v
+      op_pending=16
+      err=46
+          |
+          v
+      SPIN
+
+
+Conclusion :
+
+      l'échec ne se produit pas au chargement.
+
+      l'échec apparaît dans l'exécution du sous-graphe Mamba.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+8. ERR=46 — HYPOTHÈSE À NE PAS SURINTERPRÉTER
+──────────────────────────────────────────────────────────────────────────────────────
+
+Deux expériences produisent une signature commune :
+
+      D2 ngl99 :
+          op_pending=16
+          err=46
+
+      draft-MTP :
+          op_pending=4
+          err=46
+
+Cela suggère un problème commun du chemin DSP/RPC.
+
+Mais :
+
+      ERR=46
+      ≠ preuve automatique d'une "queue pleine"
+
+La formulation correcte du rapport est :
+
+      "Le hang est reproductible et associé à un nombre élevé
+       d'opérations en attente et à err=46."
+
+Puis :
+
+      "Une saturation du pipeline d'opérations in-flight constitue
+       une hypothèse forte, mais reste à démontrer par instrumentation
+       plus fine ou modification expérimentale du niveau de concurrence."
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+9. MULTI-HTP
+──────────────────────────────────────────────────────────────────────────────────────
+
+Observation mémoire :
+
+      HTP0 ≈ 3.4 Go
+      HTP1 ≈ 3.5 Go
+      HTP2/3 ≈ 3.6 Go
+
+      total observé ≈ 10–11.4 Go selon configuration/session.
+
+Mais :
+
+      plusieurs sessions ≠ un accélérateur unique multiplié.
+
+Le benchmark :
+
+      -dev HTP0,HTP1,HTP2
+
+teste successivement :
+
+      HTP0
+      puis HTP1
+      puis HTP2
+
+Résultats :
+
+      HTP0 ≈ 5.39 t/s
+      HTP1 ≈ 5.34 t/s
+      HTP2 ≈ 4.46 t/s
+
+Modes de split :
+
+      -sm tensor
+      -sm row
+
+      => rc=0 mais aucun résultat exploitable.
+
+Conclusion :
+
+      aucune preuve de parallélisation réelle HTP0+HTP1+HTP2
+      sur le build testé.
+
+Important :
+
+      capacité d'adressage multi-session
+      ≠
+      augmentation du débit decode.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+10. THERMIQUE
+──────────────────────────────────────────────────────────────────────────────────────
+
+D2 9B ngl60 :
+
+      départ       ≈ 37 °C
+      pic SoC      ≈ 66 °C
+      pic HVX      ≈ 67 °C
+      fin          ≈ 55 °C
+
+CPU :
+
+      cluster perf jusqu'à ~2.36–2.75 GHz
+      cluster gold ≈ 2.4 GHz
+
+GPU :
+
+      ≈ 160–222 MHz
+      donc pratiquement idle pendant le chemin HTP étudié.
+
+Interprétation :
+
+      le HTP est bien actif.
+
+Aucun élément de la campagne ne permet d'attribuer le
+5.5 t/s à une limitation thermique.
+
+Le comportement est compatible avec :
+
+      HTP actif
+      +
+      CPU auxiliaire
+      +
+      GPU non impliqué
+      +
+      decode memory/volume-bound.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+11. QAIRT — COMPARAISON
+──────────────────────────────────────────────────────────────────────────────────────
+
+Mesures :
+
+      +---------------+----------+-------------+
+      | Configuration | Decode   | Température |
+      +---------------+----------+-------------+
+      | GGML 9B D2    | 5.5 t/s  | ~66 °C      |
+      | QAIRT 8B      | 14.9-15.6| ~62-68 °C   |
+      | QAIRT 4B-v81  |25.5-26.3 | ~56-60 °C   |
+      +---------------+----------+-------------+
+
+QAIRT 4B-v81 :
+
+      ~25.9 t/s
+
+Rapport relatif :
+
+      25.9 / 5.5 ≈ 4.7×
+
+      soit environ +363 %.
+
+ATTENTION :
+
+      25.9 t/s est le meilleur résultat mesuré dans cette campagne.
+
+      Ce n'est PAS une preuve du plafond physique absolu du SM8850.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+12. MTP DRAFT — ÉTAT
+──────────────────────────────────────────────────────────────────────────────────────
+
+Test :
+
+      llama-server
+      --spec-type draft-mtp
+
+Résultat :
+
+      modèle chargé
+      graphe construit
+      plusieurs dizaines de splits
+      puis :
+
+          SPIN waiting rsp
+          op_pending=4
+          err=46
+
+      watchdog nécessaire.
+
+Conclusion :
+
+      draft-MTP n'est pas actuellement exploitable avec
+      ce build JZ.
+
+Il faut distinguer :
+
+      MTP conceptuellement
+          ≠
+      MTP implémenté correctement dans ce runtime.
+
+Le gain théorique attendu (~38 % dans les hypothèses précédentes)
+ne peut donc PAS être considéré comme mesuré.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+13. INSTRUMENTATION MUL_MAT — ÉCHEC ACTUEL
+──────────────────────────────────────────────────────────────────────────────────────
+
+Objectif :
+
+      décomposer :
+
+          1.36 ms/couche
+
+      en :
+
+          DDR
+          REPACK
+          HMX
+          synchronisation
+          transfert
+          CPU fallback
+
+Tentative :
+
+      GGML_HEXAGON_VERBOSE
+      GGML_HEXAGON_PROFILE
+
+Résultat :
+
+      échec partiel.
+
+Le build JZ 505354ed ne fournit pas les lignes modernes
+"matmul weight x activation" attendues dans la documentation
+upstream.
+
+Le profil per-op démarre, mais le hang Mamba intervient
+avant les informations suffisantes.
+
+Donc :
+
+      NO DATA DIRECTE
+      sur les cycles MUL_MAT.
+
+Conclusion :
+
+      impossible actuellement de décomposer rigoureusement
+      1.36 ms/couche avec ce build.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+14. HMX MATMUL — NOUVEL AXE
+──────────────────────────────────────────────────────────────────────────────────────
+
+Les discussions upstream autour du rework HMX quantized matmul
+sont directement pertinentes.
+
+Axes identifiés :
+
+      HMX quantized matmul
+      spatial mode
+          →
+      activation-depth mode
+
+      déquantification
+      HMX matmul
+      VTCM
+      DMA
+      batching
+      repack
+      mpyacc
+
+Références publiques à examiner :
+
+      llama.cpp issue #24365
+      "HMX quantized matmul rework"
+
+      llama.cpp issue #24963
+      HMX matmul / hang / batch-size
+
+      backend Snapdragon / Hexagon
+      documentation et code matmul-ops.c
+
+Mais :
+
+      SM8845/architectures voisines
+      ≠ automatiquement SM8850.
+
+Toute extrapolation doit donc être validée expérimentalement.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+15. MODÈLE CAUSAL ACTUEL
+──────────────────────────────────────────────────────────────────────────────────────
+
+                    ┌──────────────────────┐
+                    │      MODÈLE LLM      │
+                    └──────────┬───────────┘
+                               |
+                 ┌─────────────┼─────────────┐
+                 |             |             |
+                 v             v             v
+             CAPACITÉ       ROUTING       OPERATIONS
+                 |             |             |
+                 v             v             v
+             mappings       HTP/CPU       MUL_MAT
+             buffers        splits        Mamba
+             RSS            fallback      HMX
+                 |             |             |
+                 └─────────────┼─────────────┘
+                               |
+                               v
+                         PIPELINE DSP
+                               |
+                               v
+                          DDR / VTCM
+                               |
+                               v
+                           DECODE TG
+
+
+Trois plafonds distincts sont désormais identifiés :
+
+      ┌─────────────────────────────────────────────────────────┐
+      │ 1. CAPACITÉ                                             │
+      │    Peut-on charger/exécuter la quantité de données ?    │
+      │                                                         │
+      │    8B HTP0 : OUI                                       │
+      │    9B load : OUI                                       │
+      └─────────────────────────────────────────────────────────┘
+
+      ┌─────────────────────────────────────────────────────────┐
+      │ 2. BANDE PASSANTE EFFECTIVE                             │
+      │    Combien de données/token peuvent être déplacées ?    │
+      │                                                         │
+      │    pente ≈ 1.36 ms/couche                              │
+      │    BW_eff estimée ≈ 81–104 GB/s                       │
+      └─────────────────────────────────────────────────────────┘
+
+      ┌─────────────────────────────────────────────────────────┐
+      │ 3. PIPELINE DSP / RUNTIME                                │
+      │    Combien d'opérations peuvent progresser correctement │
+      │    dans le chemin RPC/HTP ?                             │
+      │                                                         │
+      │    9B/Mamba ngl99 : err=46 + op_pending=16             │
+      │    draft-MTP       : err=46 + op_pending=4             │
+      └─────────────────────────────────────────────────────────┘
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+16. CE QUI EST DÉMONTRÉ / CE QUI NE L'EST PAS
+──────────────────────────────────────────────────────────────────────────────────────
+
+DÉMONTRÉ :
+
+      [OK] D2-A-MTP 9B fonctionne réellement sur HTP0.
+      [OK] 0x80000600 était lié à l'environnement LD/ADSP path
+           dans la configuration étudiée.
+      [OK] 8B Q4_K_M fonctionne sur HTP0 seul ngl99.
+      [OK] RSS 8B jusqu'à ~4.97 Go.
+      [OK] 9B D2 peut charger son graphe sur HTP0 ngl99.
+      [OK] 9B ngl99 échoue pendant l'exécution Mamba.
+      [OK] err=46 est reproductible dans plusieurs scénarios.
+      [OK] sweep ngl présente une relation quasi-linéaire.
+      [OK] prefill et decode ont des régimes très différents.
+      [OK] multi-HTP n'apporte aucun gain parallèle démontré.
+      [OK] GPU Adreno reste pratiquement idle pendant ces tests.
+
+
+NON DÉMONTRÉ :
+
+      [??] 3.35 Go = limite réelle du domaine HTP.
+      [??] 4.97 Go RSS = 4.97 Go de mémoire HTP.
+      [??] err=46 = exclusivement "queue pleine".
+      [??] 16 ops = limite physique exacte.
+      [??] BW_eff exacte = 81 ou 104 GB/s.
+      [??] MXFP4 apporte nécessairement un gain.
+      [??] 25.9 t/s QAIRT 4B = plafond matériel.
+      [??] multi-HTP ne peut jamais scaler sur un autre runtime.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+17. PROCHAINES EXPÉRIENCES — ORDRE OPTIMAL
+──────────────────────────────────────────────────────────────────────────────────────
+
+PRIORITÉ 1
+==========
+
+      REWORK HMX MATMUL
+
+      Comparer :
+
+          JZ 505354ed
+              VS
+          upstream HMX récent
+
+      Focus :
+
+          hmx_matmul
+          quantized matmul
+          Q4_0
+          Q4_K
+          repack
+          VTCM
+          DMA
+          batching
+
+      Objectif :
+
+          déterminer si le 1.36 ms/couche provient
+          en partie du chemin HMX/matmul.
+
+
+PRIORITÉ 2
+==========
+
+      REBUILD MINIMAL HMX
+
+      Même modèle.
+      Même device.
+      Même ngl.
+      Même environnement.
+
+      A/B :
+
+          BUILD A = 505354ed
+          BUILD B = HMX rework uniquement
+
+      Mesurer :
+
+          TG
+          PP
+          ms/token
+          pente ms/token/ngl
+          température
+          CPU fallback
+          nombre de splits
+
+
+PRIORITÉ 3
+==========
+
+      MXFP4
+
+      Seulement après caractérisation HMX.
+
+      Question :
+
+          réduction bytes/token
+              ↓
+          réduction trafic
+              ↓
+          réduction ms/token
+              ↓
+          augmentation TG ?
+
+
+PRIORITÉ 4
+==========
+
+      MTP
+
+      Rebuild d'un serveur/runtime supportant réellement
+      --spec-type draft-mtp.
+
+      Ne pas utiliser le résultat actuel comme benchmark MTP :
+      il s'agit d'un HANG, pas d'une mesure de performance.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+18. PROTOCOLE A/B HMX RECOMMANDÉ
+──────────────────────────────────────────────────────────────────────────────────────
+
+BASELINE :
+
+      MODEL      = Qwen3 8B Q4_K_M
+      DEVICE     = HTP0
+      NGL        = 16/32/48/64/80
+      TG         = 32
+      PP         = 64
+      THREADS    = 6
+
+BUILD A :
+
+      JZ 505354ed
+
+BUILD B :
+
+      même build
+      + rework HMX uniquement
+
+Comparer :
+
+      +----------------------------------------------+
+      | métrique                                     |
+      +----------------------------------------------+
+      | TG32                                         |
+      | ms/token                                     |
+      | PP64                                         |
+      | pente ms/token/ngl                           |
+      | intercept                                    |
+      | CPU fallback                                 |
+      | HTP splits                                   |
+      | température HVX                             |
+      | RSS                                          |
+      +----------------------------------------------+
+
+CRITÈRE :
+
+      si pente :
+
+          1.36 → nettement plus faible
+
+      alors :
+
+          HMX/repack/runtime contribue au memory-wall.
+
+      si pente reste ≈ 1.36 :
+
+          hypothèse DDR/shared-memory renforcée.
+
+      si pente baisse partiellement :
+
+          modèle mixte :
+
+              HMX/repack + DDR
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+19. CONCLUSION SCIENTIFIQUE ACTUELLE
+──────────────────────────────────────────────────────────────────────────────────────
+
+La campagne ne montre PAS un simple problème de "mémoire insuffisante".
+
+Elle montre un système à plusieurs plafonds :
+
+      CAPACITÉ
+          ↓
+      suffisamment élevée pour charger le 8B HTP0
+      et construire le 9B HTP0.
+
+      BANDE PASSANTE EFFECTIVE
+          ↓
+      comportement decode fortement volume-bound.
+
+      RUNTIME / PIPELINE DSP
+          ↓
+      certaines configurations hybrides/Mamba/MTP provoquent
+      err=46 et un SPIN reproductible.
+
+      MATMUL / HMX
+          ↓
+      composante encore insuffisamment instrumentée.
+
+La conclusion la plus robuste aujourd'hui est donc :
+
+      "Le plafond observé du GGML-HTP n'est pas réductible
+       à une simple limite de capacité mémoire."
+
+Le decode 8B montre un memory-wall empirique.
+
+Le 9B/Mamba révèle en parallèle une limite du chemin d'exécution DSP.
+
+Le prochain test déterminant est donc le **A/B du chemin HMX matmul**,
+avant de déclarer MXFP4 comme solution définitive.
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+20. ÉTAT DES ARTEFACTS
+──────────────────────────────────────────────────────────────────────────────────────
+
+Rapports :
+
+      RAPPORT_GGML_HEXAGON_20260826.md
+      GUIDE_REPRODUCTION_NPU_HTP_20260829.md
+      RAPPORT_NPU_HTP_GPU_20260830.md
+      RAPPORT_MULTIHTP_MTP_D2_20260831.md
+      RAPPORT_9B_D2_SINGLE_HTP0_20260831.md
+
+Données :
+
+      provenance.json
+      causal.json
+      RAG :
+          rapport 9B D2 GGML HTP
+          rapport multi-HTP/MTP
+          chunks indexés
+
+Scripts :
+
+      ingest_d2_ggml.py
+      ingest_multihpt_mtp.py
+      sweep_d2_ngl.sh
+      sweep_8b_multihpt.sh
+
+État device après tests :
+
+      CDSP_ALIVE
+      governor 64/64 OK
+      température post-test ≈ 39–41 °C
+      aucun process llama résiduel
+
+
+──────────────────────────────────────────────────────────────────────────────────────
+21. VERDICT FINAL
+──────────────────────────────────────────────────────────────────────────────────────
+
+      ┌──────────────────────────────────────────────────────────┐
+      │ ACCEPTÉ :                                                │
+      │                                                          │
+      │  • capacité HTP0 > vmem déclarée                        │
+      │  • memory-wall decode 8B                                 │
+      │  • absence de scaling multi-HTP démontré                 │
+      │  • 9B D2 charge mais échoue en exécution Mamba ngl99     │
+      │  • err=46 reproductible                                  │
+      │                                                          │
+      │ À ÉTABLIR :                                              │
+      │                                                          │
+      │  • rôle exact de HMX/matmul                              │
+      │  • cause exacte de err=46                                │
+      │  • BW absolue réelle                                     │
+      │  • gain réel de MXFP4                                    │
+      │  • support MTP après rebuild                              │
+      └──────────────────────────────────────────────────────────┘
+
+ÉTAPE SUIVANTE RECOMMANDÉE :
+
+      HMX MATMUL A/B
+          ↓
+      mesurer pente
+          ↓
+      identifier DDR vs REPACK/HMX
+          ↓
+      MXFP4
+          ↓
+      rebuild MTP
