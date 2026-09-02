@@ -1,0 +1,339 @@
+================================================================================
+RAPPORT D'EXPERIMENTATION
+SWEEP NGL HTP0 -> CPU - Qwen3.5-9B-D2-A-MTP
+================================================================================
+Date       : 2026-08-31
+Statut     : PROTOCOLE REPRODUCTIBLE - RESULTATS A REMPLIR
+Plateforme : Android / Hexagon HTP
+Backend    : ggml-hexagon
+
+--------------------------------------------------------------------------------
+1. OBJECTIF
+--------------------------------------------------------------------------------
+
+Determiner le sweet spot exact du nombre de couches offloadees vers HTP
+(NGL) pour Qwen3.5-9B-D2-A-MTP, avant d'optimiser OPQUEUE / OPBATCH.
+
+Deux modeles doivent etre compares :
+
+  A) Candidat attnQ4
+     Qwen3.5-9B-D2-A-MTP-attnQ4.gguf
+     Taille attendue : ~5.07 GiB
+     Modification : attention Q8_0 -> Q4_0
+
+  B) Baseline mixte
+     Reference utilisee dans les essais precedents.
+
+Valeurs NGL ciblees :
+
+  33 / 40 / 50 / 60 / 66 / 75 / 90
+
+--------------------------------------------------------------------------------
+2. CONTEXTE TECHNIQUE ETABLI
+--------------------------------------------------------------------------------
+
+M1 - REPACK DES POIDS AU CHARGEMENT
+
+  GGML_TYPE_Q4_0  -> repack_q4_0_tiled()  -> Q4_0_TILED
+  GGML_TYPE_Q4_1  -> repack_q4_1_tiled()  -> Q4_1_TILED
+  GGML_TYPE_Q8_0  -> repack_q8_0_tiled()  -> Q8_0_TILED
+  GGML_TYPE_IQ4_NL -> repack_q4_0_tiled()
+  GGML_TYPE_MXFP4  -> repack_mxfp4_tiled()
+
+Le backend ne promeut pas un poids Q4 en Q8.
+Le format de quantification du poids est conserve lors du repack.
+
+M2 - QUANTIFICATION RUNTIME DES ACTIVATIONS
+
+Pour les chemins HVX quantifies :
+
+  activation F32 -> quantize_f32_q8_0_tiled()
+
+Pour Q4_0 et Q8_0, la meme quantification d'activation Q8_0_TILED est
+utilisee. La variante Q4_1 utilise Q8_1_TILED.
+
+Donc, dans l'essai attnQ4 :
+
+  poids      = Q4_0_TILED
+  activation = Q8_0_TILED
+
+Ce sweep NGL ne cherche PAS a modifier cette precision d'activation.
+
+--------------------------------------------------------------------------------
+3. CONFIGURATION HEXAGON PERTINENTE
+--------------------------------------------------------------------------------
+
+GGML_HEXAGON_MM_SELECT :
+
+  3 = HMX -> Tiled -> Flat -> CPU
+  2 = Tiled -> Flat -> CPU
+  1 = Flat -> CPU
+
+Important : MM_SELECT change le chemin d'execution, pas la precision de
+l'activation Q8_0_TILED du chemin quantifie.
+
+Variables a NE PAS modifier pendant le sweep NGL :
+
+  GGML_HEXAGON_OPQUEUE
+  GGML_HEXAGON_OPBATCH
+  GGML_HEXAGON_OPFUSION
+  GGML_HEXAGON_OPSTAGE
+  GGML_HEXAGON_OPPOLL
+  GGML_HEXAGON_MM_SELECT
+  GGML_HEXAGON_NHVX
+  GGML_HEXAGON_NHMX
+  GGML_HEXAGON_VMEM
+  GGML_HEXAGON_MBUF
+
+But : isoler l'effet de NGL.
+
+--------------------------------------------------------------------------------
+4. ETAT DEVICE - CONTROLE PREALABLE
+--------------------------------------------------------------------------------
+
+Executer exactement :
+
+  cd "/c/Users/videl/Desktop/geniex_harness"
+  export MSYS_NO_PATHCONV=1
+  ADB=tools/platform-tools/adb.exe
+  $ADB shell "cat /sys/class/thermal/thermal_zone0/temp; echo; ps -A | grep -E 'llama|quantize' | head -3; ls -la /data/local/tmp/Qwen3.5-9B-D2-A-MTP-attnQ4.gguf 2>/dev/null | awk '{print \$5}'"
+
+A enregistrer :
+
+  temperature device : ____________________ C
+  ancien processus   : ____________________
+  fichier attnQ4     : PRESENT / ABSENT
+  taille octets      : ____________________
+
+Condition de validite :
+
+  [ ] aucun ancien processus llama/quantize
+  [ ] GGUF attnQ4 present
+  [ ] taille conforme (~5.07 GiB)
+  [ ] device sain
+
+--------------------------------------------------------------------------------
+5. CONDITIONS EXPERIMENTALES
+--------------------------------------------------------------------------------
+
+Conserver strictement constants :
+
+  - appareil
+  - firmware / runtime
+  - binaire llama
+  - backend
+  - GGUF
+  - prompt
+  - nombre de tokens generes
+  - seed / parametres de generation si applicables
+  - variables GGML_HEXAGON_*
+  - sequence de warm-up
+
+Pour chaque NGL :
+
+  1. lancer
+  2. warm-up identique
+  3. mesurer
+  4. repeter 2 a 3 fois minimum
+  5. conserver toutes les sorties brutes
+
+--------------------------------------------------------------------------------
+6. SWEEP NGL
+--------------------------------------------------------------------------------
+
++------+-------+-----------+-----------+----------+-----------+----------+
+| Run  | NGL   | TTFT (ms) | TPS dec.  | ms/token | CPU (%)   | HTP info |
++------+-------+-----------+-----------+----------+-----------+----------+
+|  1   |  33   |           |           |          |           |          |
+|  2   |  40   |           |           |          |           |          |
+|  3   |  50   |           |           |          |           |          |
+|  4   |  60   |           |           |          |           |          |
+|  5   |  66   |           |           |          |           |          |
+|  6   |  75   |           |           |          |           |          |
+|  7   |  90   |           |           |          |           |          |
++------+-------+-----------+-----------+----------+-----------+----------+
+
+HTP info peut inclure :
+
+  - utilisation HTP
+  - DMA
+  - VTCM
+  - temps kernel
+  - traces disponibles
+
+--------------------------------------------------------------------------------
+7. TABLEAU DES REPETITIONS
+--------------------------------------------------------------------------------
+
+Pour chaque valeur NGL, conserver les repetitions brutes.
+
+NGL=33
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+NGL=40
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+NGL=50
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+NGL=60
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+NGL=66
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+NGL=75
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+NGL=90
+  Run 1 : ______________________________
+  Run 2 : ______________________________
+  Run 3 : ______________________________
+  Moy.  : ______________________________
+  Ecart : ______________________________
+
+--------------------------------------------------------------------------------
+8. CRITERE DE SWEET SPOT
+--------------------------------------------------------------------------------
+
+Le sweet spot est le NGL qui maximise le debit decode reproductible, sous
+reserve :
+
+  - variance acceptable
+  - absence d'erreur / crash
+  - temperature comparable
+  - cout CPU raisonnable
+  - absence de degradation manifeste du pipeline
+
+NGL retenu : ____________________
+TPS moyen  : ____________________ tok/s
+TTFT       : ____________________ ms
+CPU        : ____________________ %
+
+--------------------------------------------------------------------------------
+9. HYPOTHESES DISCRIMINANTES
+--------------------------------------------------------------------------------
+
+H1 - PIPELINE / OFFLOAD BOUND
+
+  Le TPS presente un optimum pour un NGL intermediaire.
+  Un NGL trop eleve augmente le cout CPU / transferts / synchronisation.
+
+H2 - HTP LIMITED
+
+  Le TPS continue d'augmenter avec NGL jusqu'a une valeur elevee.
+  La partie CPU limite le debit seulement apres un certain seuil.
+
+H3 - BOTTLENECK AILLEURS
+
+  Le TPS reste quasi plat sur une large plage de NGL.
+  Le goulet d'etranglement est alors probablement lie au pipeline, a la RAM,
+  aux synchronisations ou au cout des kernels plutot qu'au seul partage HTP/CPU.
+
+--------------------------------------------------------------------------------
+10. RAPPEL SUR L'EXPERIENCE ATTENTION Q4
+--------------------------------------------------------------------------------
+
+Resultat etabli precedemment :
+
+  Q8_0 -> Q4_0 selectif sur l'attention
+  7.29 GiB -> 5.07 GiB
+  reduction ~= 30 %
+
+Cette modification agit principalement sur M1 (poids).
+M2 conserve l'activation Q8_0_TILED.
+
+Le sweep NGL sert a determiner si la faible amelioration TPS observee malgre
+la reduction de taille vient d'un probleme de repartition HTP/CPU ou d'un autre
+goulet d'etranglement du backend.
+
+--------------------------------------------------------------------------------
+11. PHASE SUIVANTE APRES LE SWEET SPOT NGL
+--------------------------------------------------------------------------------
+
+Une fois NGL optimal identifie, lancer seulement ensuite :
+
+  A) sweep GGML_HEXAGON_OPQUEUE
+  B) sweep GGML_HEXAGON_OPBATCH
+  C) profiling pour quantifier la part pipeline-bound
+
+Ne pas melanger ces variables avec le sweep NGL initial.
+
+--------------------------------------------------------------------------------
+12. LIVRABLES ET PROVENANCE
+--------------------------------------------------------------------------------
+
+Investigation backend :
+
+  RAPPORT_INVESTIGATION_REPACK_Q8_TILED_20260831.md
+  INVESTIGATION_REPACK_Q8_TILED_20260831.docx
+
+Provenance RAG :
+
+  code:20260831_repack_q8_tiled_m1_m2
+
+Tests precedents :
+
+  governor : 71/71 OK
+  temperature device precedente : 39.5 C
+
+ATTENTION : ces valeurs sont des resultats precedents, pas des resultats du
+present sweep NGL.
+
+--------------------------------------------------------------------------------
+13. REGLE DE REPRODUCTIBILITE
+--------------------------------------------------------------------------------
+
+Ne declarer aucun sweet spot sur la base d'un seul run.
+Conserver :
+
+  - commande exacte
+  - environnement exact
+  - log brut
+  - metriques brutes
+  - temperature
+  - NGL
+  - commit / version du binaire
+  - hash ou identification du GGUF
+
+--------------------------------------------------------------------------------
+14. CONCLUSION PROVISOIRE
+--------------------------------------------------------------------------------
+
+ETAT : PROTOCOLE PRET, RESULTATS NGL NON ENCORE REMPLIS.
+
+Conclusion actuelle autorisee :
+
+  Le backend distingue clairement le repack des poids Q4/Q8 et la quantification
+  runtime des activations. Le sweep NGL doit maintenant isoler l'effet du split
+  HTP/CPU sans modifier les autres leviers du backend.
+
+Conclusion de performance : NON DISPONIBLE AVANT EXECUTION DU SWEEP.
+
+================================================================================
+FIN DU DOCUMENT
+================================================================================
