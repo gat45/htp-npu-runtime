@@ -1,0 +1,1 @@
+grep -aE 'hwinfo|Arch version|REPACK|shared buf' /data/local/tmp/hwinfo_run.log 2>/dev/null | head -8
