@@ -1,0 +1,8 @@
+#!/system/bin/sh
+# Invoque le RunCommandService de Termux (lancé via su/root) pour installer nodejs.
+am startservice --user 0 -n com.termux/.app.RunCommandService \
+  -a com.termux.RUN_COMMAND \
+  --es com.termux.RUN_COMMAND_PATH /data/data/com.termux/files/usr/bin/pkg \
+  --esa com.termux.RUN_COMMAND_ARGUMENTS install,nodejs-lts,-y \
+  --es com.termux.RUN_COMMAND_WORKDIR /data/data/com.termux/files/home \
+  --ez com.termux.RUN_COMMAND_BACKGROUND true
