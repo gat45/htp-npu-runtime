@@ -1,0 +1,28 @@
+=== git log -12 ===
+9ef4543d hex-mm: correct overhead sizing to make sure we dont exceed vtcm budget for large dims
+5618c305 ggml: gallocr reserve/compute mismatch detection + pass45 determinism test
+5291e12a ggml-hexagon: make MUL_MAT row limit configurable (lm-head offload)
+505354ed qwen35: fix GDN state crash - use ggml_cont_4d for state tensor
+1248f04f ggml-hexagon: rebuild skel fixes standalone ADD hang - pipeline works
+859926e7 ggml-hexagon: pass 4.5 topological reorder with debug prints
+0f5545a9 doc: refine toplevel README.md
+6ec61410 Merge branch 'master' into self-build-jz
+095f86a8 ggml-hexagon: bump verstion to 0.99.7.7
+5d5cb4c3 ggml-meta: propagate buffer usage and call init on the new tensors (#27586)
+8ad087dc test-backend-ops: skip repack buft allocation for dspqueue-based ggml-hexagon
+d222767c kleidiai: Rework KleidiAI Build System/Integration (#26077)
+
+=== branch ===
+exp-pr28202-0983d01
+
+=== MERGE_HEAD ===
+(aucun)
+
+=== conflits ===
+ggml/src/ggml-hexagon/ggml-hexagon.cpp
+ggml/src/ggml-hexagon/htp/matmul-ops.c
+
+=== dirty ===
+ M scripts/ui-assets.cmake
+ M src/llama-mmap.cpp
+ M tools/ui/CMakeLists.txt
