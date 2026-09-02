@@ -1,0 +1,5 @@
+CONFIG='Marco-Nano Q4_0 -dev HTP0 -ngl 99 -t 8 -c 2048 --fit off n_predict=200'
+ab_A1 filter=none tps=29.54084764419162 predicted=200 T=38->49C
+ab_B1 filter=ARGSORT tps=31.083448750812426 predicted=200 T=37->48C
+ab_A2 filter=none tps=27.96080316915331 predicted=200 T=38->49C
+ab_B2 filter=ARGSORT tps=35.60507424194739 predicted=200 T=35->48C

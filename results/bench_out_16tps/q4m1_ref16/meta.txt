@@ -1,0 +1,13 @@
+label=q4m1_ref16
+port=8543
+n_predict=16
+spec_args=--spec-type draft-mtp --spec-draft-n-max 1
+server_pid=21355
+T_start_c=32
+T_end_c=47
+runtime=/data/local/tmp/npu
+model=/data/local/tmp/Qwen3.5-9B-D2-A-MTP-attnQ4.gguf
+0.11.059.077 I slot print_timing: id  3 | task 0 |        eval time =    1454.01 ms /    16 tokens (   96.93 ms per token,    10.32 tokens per second)
+0.11.059.078 I slot print_timing: id  3 | task 0 |       total time =    1890.67 ms /    21 tokens
+0.11.059.079 I slot print_timing: id  3 | task 0 |    graphs reused =          8
+0.11.059.081 I slot print_timing: id  3 | task 0 | draft acceptance = 0.75000 (    6 accepted /     8 generated), mean len =  1.75

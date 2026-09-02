@@ -1,0 +1,9 @@
+CONFIG='Marco-Nano MoE Q4_0 + --fit off + -ngl 99 -t 8 -c 2048 n_predict=100 CPU=auto (PAS de MTP)'
+gpu_htp_5050 dev=GPUOpenCL,HTP0 ts=0.5,0.5 tps=37.45632932512775 eval=2643.08 ms predicted=100 accept= mean_len= T=33->46C htp_lines=1524 gpu_lines=0
+htp_only dev=HTP0 ts= tps=30.638515956941436 eval=3231.23 ms predicted=100 accept= mean_len= T=37->49C htp_lines=3144 gpu_lines=0
+htp_gpu_2080 dev=HTP0,GPUOpenCL ts=0.2,0.8 tps=22.497576397451727 eval=4400.47 ms predicted=100 accept= mean_len= T=38->41C htp_lines=765 gpu_lines=0
+htp_gpu_5050 dev=HTP0,GPUOpenCL ts=0.5,0.5 tps=22.511562757234397 eval=4397.74 ms predicted=100 accept= mean_len= T=37->44C htp_lines=1737 gpu_lines=0
+gpu_htp_8020 dev=GPUOpenCL,HTP0 ts=0.8,0.2 tps=39.11407798635985 eval=2531.06 ms predicted=100 accept= mean_len= T=44->47C htp_lines=552 gpu_lines=0
+gpu_only dev=GPUOpenCL ts= tps=22.959263541037366 eval=4311.98 ms predicted=100 accept= mean_len= T=38->42C htp_lines=0 gpu_lines=0
+htp_gpu_8020 dev=HTP0,GPUOpenCL ts=0.8,0.2 tps=22.586459942000708 eval=4383.16 ms predicted=100 accept= mean_len= T=38->42C htp_lines=2709 gpu_lines=0
+gpu_htp_2080 dev=GPUOpenCL,HTP0 ts=0.2,0.8 tps=29.88547523641222 eval=3312.65 ms predicted=100 accept= mean_len= T=38->49C htp_lines=2496 gpu_lines=0

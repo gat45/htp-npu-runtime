@@ -1,0 +1,9 @@
+CONFIG='attnQ4 + MTP n_max=1 + --fit off + -ngl 99 -t 8 -c 2048 n_predict=100 CPU=auto'
+gpu_only dev=GPUOpenCL ts= tps=4.9177200853597 eval=20131.28 ms predicted=100 accept=0.84906 mean_len= T=35->47C htp_lines=0 gpu_lines=4
+htp_gpu_5050 dev=HTP0,GPUOpenCL ts=0.5,0.5 tps=6.112793261256708 eval=6870.84 ms predicted=43 accept=0.82609 mean_len= T=41->48C htp_lines=724 gpu_lines=4
+gpu_htp_5050 dev=GPUOpenCL,HTP0 ts=0.5,0.5 tps=5.27981935523868 eval=5871.41 ms predicted=32 accept=0.72222 mean_len= T=40->53C htp_lines=1127 gpu_lines=0
+htp_only dev=HTP0 ts= tps=11.255227285672333 eval=8795.91 ms predicted=100 accept=0.90385 mean_len= T=39->60C htp_lines=1143 gpu_lines=0
+htp_gpu_8020 dev=HTP0,GPUOpenCL ts=0.8,0.2 tps=8.349051758554868 eval=11857.63 ms predicted=100 accept=0.90385 mean_len= T=39->50C htp_lines=891 gpu_lines=4
+gpu_htp_8020 dev=GPUOpenCL,HTP0 ts=0.8,0.2 tps=4.459238907913472 eval=22201.10 ms predicted=100 accept=0.84906 mean_len= T=38->41C htp_lines=1646 gpu_lines=0
+gpu_htp_2080 dev=GPUOpenCL,HTP0 ts=0.2,0.8 tps=4.174896572579166 eval=8862.50 ms predicted=38 accept=0.68182 mean_len= T=35->36C htp_lines=1121 gpu_lines=0
+htp_gpu_2080 dev=HTP0,GPUOpenCL ts=0.2,0.8 tps=5.259975064530329 eval=18821.38 ms predicted=100 accept=0.84906 mean_len= T=34->39C htp_lines=1157 gpu_lines=4
