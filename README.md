@@ -1661,3 +1661,197 @@ thermal hysteresis
 layer-aware cost model
 
 without introducing excessive backend transitions or thermal oscillation.
+
+
+# Archive RUNTIME HTP GELÉ — OnePlus 15 / SM8850 / HTP v81 (2026-09-02)
+
+**Ce dossier = le runtime gelé qui a produit toutes les campagnes du 02/09, les
+commandes exactes, les résultats bruts et les modèles — pour reproduction
+autonome et contrôle par un tiers.**
+
+| | |
+|---|---|
+| Device | OnePlus 15 · Snapdragon 8 Elite Gen 5 (SM8850) · Android 16 · Magisk 30.7 |
+| Accélérateurs | Hexagon HTP v81 (cDSP) · Adreno GPU (OpenCL) · CPU |
+| Runtime | fork JZ `exp-pr28202-0983d01` · HEAD `9ef4543d` · ggml-hexagon 0.99.7.7 |
+| Skel critique | `htp/libggml-htp-v81.so` = **734 920 o** (rebuilt — le seul qui ouvre HTP0 en user shell) |
+| Modèles archivés | Qwen3.5-9B-D2-A-MTP-attnQ4 (5,08 GiB, config « 16 t/s ») · Marco-Nano-Instruct Q4_0 (4,26 GiB, contrôle MoE) |
+| Statut | VALIDÉ : config dense reproduite et dépassée (100/300 tokens) + contrôle MoE indépendant (2e architecture) |
+
+---
+
+## 1. Pourquoi cette archive existe
+
+L'investigation « 16 t/s » a commencé sur un chiffre historique non reproductible.
+La campagne du 02/09 a établi — avec un protocole gardé (kill-all → port libre →
+PID → health → meta → clean) — ce qui est **réellement mesurable** sur ce SoC,
+sur **deux architectures de modèle**, et ce qui doit rester dans les
+« artefacts de formule ». Tout le monde peut re-mesurer les mêmes chiffres avec
+ce dossier ; rien n'est reconstruit de mémoire.
+
+## 2. Résultats consolidés (les faits, pas les réclames)
+
+### 2.1 Qwen dense (config « 16 t/s » : attnQ4 + MTP n_max=1 + HTP0 + --fit off)
+
+| Mesure | Valeur | Condition |
+|---|---|---|
+| wall 16 tokens (ref) | 10,32 t/s · accept 0,75 · mean_len 1,75 | froid, propre |
+| wall 3×300 tokens | **11,01 ± 0,16 t/s** · accept 0,87-0,90 | consolidé (régime tenu) |
+| wall 100 tokens | 11,26-11,31 t/s | propre |
+| **« 16,6 / 16,4-18,9 effectifs »** | = wall × mean_len | ⚠ **ARTEFACT DE FORMULE** — ne jamais publier comme débit |
+| Placement | HTP0 pur **11,26** > HTP→GPU 8,35 > GPU→HTP 4,2-6,1 > GPU seul 4,9 | HTP0 imbattable sur dense |
+| MTP vs non-MTP | +72 % (5,78 → 9,4-10,4) | MTP = SEUL levier spéculatif valable sur HTP |
+| ngram (mod, propre) | 2,55-3,36 t/s | ❌ réfuté (le « 10,27 » historique = contaminé) |
+| RAM MTP | RSS ≈ 0 Δ vs non-MTP (+1,4 Go VA réservée seulement) | pas de doublement réel |
+| Q8→Q4 attention | MUL_MAT −17 % · DSP −14 % · **wall ≈ inchangé** | Q4 = condition de SÛRETÉ (5,08 Go < swap), pas levier de vitesse |
+
+### 2.2 Contrôle Marco-Nano MoE (même runtime, 2e architecture : 17,3B / 0,6B actifs, 256 experts top-8)
+
+| Mesure | Valeur |
+|---|---|
+| HTP0 pur | 26,7 → 30,6 t/s (screening 30,64 · A/B 29,93) |
+| **GPU→HTP 80/20** | **39,1 → 42,1 t/s (+40 % vs HTP pur, A/B/A/B confirmé)** |
+| HTP→GPU (ordre inversé) | 22,5 t/s — pire que HTP pur |
+| ARGSORT → CPU (A/B/A/B, n=200) | **28,75 → 33,35 t/s (+16 %)** |
+| ARGSORT HTP | 215 µs/op fixe · 35,7 % du DSP · tri complet 256 pour 8 utilisés (96,9 % jeté) |
+
+**Le classement de placement s'INVERSE selon l'architecture** : dense compute-bound
+→ HTP0 ; MoE sparse orchestration-bound → GPU (mégablocs OpenCL 1416 nœuds vs
+micro-splits HTP 58 nœuds). Le levier n'est pas « quel silicium » mais
+« comment découper le graph ».
+
+### 2.3 APK (test conditions réelles — boutons sur le téléphone)
+
+HTP0 : 28,2-29,8 t/s · GPU : 21,1-21,5 t/s (100 tokens, sortie affichée).
+→ APK : `C:\Users\videl\Desktop\geniex_harness\android\marco_moe_htp_test\app\build\outputs\apk\debug\app-debug.apk`
+
+---
+
+## 3. Arborescence
+
+```
+D:\archive_16tps_20260902\
+├── README.md                                  ← ce fichier (entrée)
+├── DOSSIER_REPRODUCTION_RUNTIME_20260902.md   ← référence : inventaire, configs, résultats
+├── TUTO_REPRODUCTION_PAS_A_PAS_20260902.md    ← procédure 8 étapes + dépannage
+├── RAPPORT_ARCHIVE_RUNTIME_16TPS_20260902.md  ← rapport maître 12 sections
+├── sha256_runtime.txt                         ← SHA-256 des binaires (vérif intégrité)
+├── git_state_jz_fork.txt                      ← HEAD 9ef4543d, branche, log -12
+├── runtime_device 16ts\                       ← RUNTIME GELÉ (binaires + .so + skel + cfg)
+│   ├── llama-server · ggml-hexagon.cfg
+│   ├── libggml-{base,cpu,hexagon,opencl}.so · libggml.so
+│   ├── libllama.so · libllama-common.so · libllama-server-impl.so
+│   ├── libOpenCL.so · libcdsprpc.so · libmtmd.so · libomp.so
+│   ├── vendor.qti.hardware.dsp*.so
+│   └── htp\libggml-htp-v81.so (734 920 o) + v68/69/73/75/79 + lib_june_20260602 (réf. KO)
+├── scripts\                                   ← protocole + campagnes
+│   ├── run_guarded_bench.sh                   ← protocole GARDÉ (référence)
+│   ├── campaign_3x300.sh                      ← 3×300 tokens config gelée
+│   ├── campaign_ratios_npu_gpu.sh             ← 8 configs placement Qwen
+│   ├── campaign_ratios_npu_gpu_moe.sh         ← 8 configs placement Marco
+│   ├── bench_argsort_ab.sh                    ← A/B ARGSORT HTP vs CPU
+│   ├── bench_moe_placement_ab.sh              ← A/B HTP pur vs GPU→HTP
+│   └── device\ (320+ scripts device bruts) · devices\
+├── results\                                   ← RÉSULTATS BRUTS (meta.txt par run)
+│   ├── bench_out_16tps\ (16tps_r1..r3, q4m1_ref16, q4m1_100t)
+│   ├── camp_ratios_qwen\synthese.txt
+│   ├── camp_ratios_moe\synthese.txt
+│   └── argsort_ab\synthese.txt
+├── reports\                                   ← 9 rapports détaillés (liens §4)
+└── models\
+    ├── Qwen3.5-9B-D2-A-MTP-attnQ4.gguf        (5 450 272 384 o)
+    └── Marco-Nano-Instruct.Q4_0.gguf          (4 569 976 352 o)
+```
+
+Liens externes : `D:\profil_40tokens\` (logs de profiling n_predict=40) ·
+`D:\jz_work snapdragon\ggml-hexagon-fork\` (SOURCE, 7,8 Go) ·
+`C:\Users\videl\Desktop\geniex_harness\bench_results\` (83 rapports) ·
+`D:\models_marco\` (Marco Q8_0 source + Q4_0).
+
+---
+
+## 4. Où trouver quoi (rapports)
+
+| Sujet | Fichier |
+|---|---|
+| Protocole gardé (pourquoi les anciens chiffres étaient contaminés) | `reports/RAPPORT_PROTOCOLE_GARDE_VALIDE_20260902.md` |
+| Config gelée × croisement complet | `reports/RAPPORT_CONFIG_16TPS_GELÉE_CROISEMENT_20260902.md` |
+| Test soutenu 100/300 tokens (le « 16 » vs le réel) | `reports/RAPPORT_16TPS_SOUTENU_100_300_TOKENS_20260902.md` |
+| Placement Qwen (8 configs) | `reports/RAPPORT_CAMPAGNE_RATIOS_NPU_GPU_20260902.md` |
+| Contrôle MoE Marco (26,7 t/s HTP0) | `reports/RAPPORT_CONTROLE_MOE_MARCO_HTP_20260902.md` |
+| **Renversement MoE×placement (GPU +40 %)** | `reports/RAPPORT_MOE_PLACEMENT_REVERSEMENT_20260902.md` |
+| Coût fixe par-op HTP (215 µs, profil mixte) | `reports/RAPPORT_PROFIL_MIXTE_MOE_GPU_HTP_20260902.md` |
+| ARGSORT top-k : +16 % CPU, sortie ≠ entre backends | `reports/RAPPORT_ARGSORT_TOPK_REPRODUCTIBLE_20260902.md` |
+| Impasse MoE ≤ 8B avec tête MTP | `reports/RAPPORT_MOE_NATIF_MTP_INTROUVABLE_20260902.md` |
+
+Le même contenu vit dans `bench_results/` du repo (avec les scripts dans `tools/`
+et le projet APK dans `android/marco_moe_htp_test/`).
+
+---
+
+## 5. Reproduction rapide (résumé — détail : TUTO_PAS_A_PAS)
+
+```bash
+# 0. Device froid (< 45 °C), aucun llama-server résiduel
+ADB="C:/Users/videl/Desktop/geniex_harness/tools/platform-tools/adb.exe"
+
+# 1. Déployer le runtime gelé (une fois) : contenu de "runtime_device 16ts\" → /data/local/tmp/npu/
+#    (binaires + .so + ggml-hexagon.cfg + htp/libggml-htp-v81.so = 734 920 o EXACTEMENT)
+
+# 2. Pousser le modèle (config « 16 t/s ») :
+"$ADB" push "D:\archive_16tps_20260902\models\Qwen3.5-9B-D2-A-MTP-attnQ4.gguf" \
+    /data/local/tmp/Qwen3.5-9B-D2-A-MTP-attnQ4.gguf
+
+# 3. Run gardé (env requis : user shell, PAS su ; --fit off obligatoire) :
+"$ADB" shell "sh /data/local/tmp/run_guarded_bench.sh ref16 8541 16 \
+    'The capital of France is' --spec-type draft-mtp --spec-draft-n-max 1"
+# → attendu : tps≈10,3 wall · accept 0,75 · mean_len 1,75   (PAS 16 — voir §2.1)
+
+# 4. Long : sh /data/local/tmp/campaign_3x300.sh → 11,0 ± 0,3 t/s attendus
+
+# 5. Contrôle MoE : MODEL=/data/local/tmp/Marco-Nano-Instruct.Q4_0.gguf
+#    → HTP0 ~27-31 t/s · -dev GPUOpenCL,HTP0 (ts 0.8,0.2) → ~39-42 t/s
+```
+
+Pièges connus (détail dans le tuto) : lancer via `su` = crash HTP0
+(`0x80000406` / mémoire CDSP non rapportée) — sauf l'APK qui passe par
+`su + setsid` (validé). Après reboot : attendre 30+ min avant tout benchmark
+(post-boot = 1,5-1,9 t/s contaminants). Cooldown T ≤ 45 °C entre runs.
+APK : autoriser l'UID 10375 dans Magisk (`UPDATE policies SET policy=2 WHERE
+uid=10375` + `kill $(pidof magiskd)`) sinon « runtime absent » en boucle.
+
+---
+
+## 6. Ce qui est prouvé / pas prouvé (garde-fous)
+
+**[MEASURED, reproductible]** — wall 11,0 ± 0,3 t/s (Qwen dense, config gelée,
+3×300) · 26-31 t/s (Marco HTP0) · 39-42 t/s (Marco GPU→HTP 80/20) · +16 %
+(ARGSORT CPU) · fixe par-op HTP 215 µs · sortie ≠ entre backends HTP/CPU
+(déterministe par backend).
+
+**[ÉTABLI]** — MTP est le seul levier spéculatif utile sur HTP (+72 %) ; ngram
+réfuté ; hybrides HTP/GPU réfutés sur dense (−24/-29 %) ; le classement de
+placement dépend de l'architecture du modèle.
+
+**[ARTEFACT, ne pas citer comme débit]** — « 16,6 effective t/s » = wall ×
+mean_len. Débit wall réel soutenu = 10,3-11,3 t/s (Qwen) / 26-30 t/s (Marco HTP0).
+
+**[NON PROUVÉ / limites]** — contrôle thermique à ±0,5 °C (comparer moyennes ± σ
+sur ≥ 3 runs, jamais le meilleur run) · profil absolus µs sur run profilé
+(overhead 2,4× — ratios % fiables, µs à confirmer) · le GPU côté OpenCL n'est
+pas profilé (GGML_OPENCL_PROFILING non compilé dans le binaire) · prompt court
+(5 tokens) — un prefill long peut changer le ratio.
+
+---
+
+## 7. Contexte projet
+
+Ce dossier documente la **partie exécution HTP** du projet `geniex_harness`
+(harnais Reason-Act-Observe local : `README.md` du repo, `AGENTS.md` pour les
+axes expérimentaux AXE-6→10, `governor/` pour le moteur de décision adaptatif).
+La chronologie des faits expérimentaux est dans `docs/TRAVAUX_ET_FONCTIONNEMENT.md`
+et les rapports horodatés dans `bench_results/`.
+
+*Dernière mise à jour : 2026-09-02 · généré depuis les résultats bruts de
+`results/` (aucun chiffre reconstruit de mémoire).*
+
