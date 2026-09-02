@@ -8,6 +8,7 @@ Runtime: llama.cpp / GGML with Qualcomm Hexagon HTP and Adreno OpenCL
 Measurement metric: tg16 / generated tokens per second
 Important: D2-A, D2-A-MTP, and other D* names are local profiler/model configuration names created by the benchmark scripts. They are not Qualcomm terminology.
 
+https://huggingface.co/gat45/snapdragon-test-npu
 1. Executive Summary
 This report documents a series of reproducible experiments investigating heterogeneous inference between:
 
