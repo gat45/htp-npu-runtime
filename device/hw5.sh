@@ -1,0 +1,5 @@
+cd /data/local/tmp
+rm -f libggml-base.so libggml-cpu.so libggml-hexagon.so libggml-htp-v73.so libggml-htp-v75.so libggml-htp-v79.so libggml-htp-v81.so libggml-opencl.so libggml.so libllama-common.so libllama.so libmtmd.so libomp.so libllama-batched-bench-impl.so libllama-bench-impl.so libllama-cli-impl.so libllama-completion-impl.so libllama-fit-params-impl.so libllama-perplexity-impl.so libllama-quantize-impl.so libllama-server-impl.so
+LD_LIBRARY_PATH=/data/local/tmp:/data/local/tmp/llama_cpp:/data/local/tmp/qairt GGML_HEXAGON_VERBOSE=1 timeout 130 ./geniex-bench --plugin llama_cpp --device npu -m /data/local/tmp/qwen05b.gguf --prompt-file /data/local/tmp/prompt.txt -n 8 > /data/local/tmp/hw4.log 2>&1
+echo EXIT=$?
+grep -aE 'hwinfo|Arch version|new session|REPACK|shared buf|ERROR' /data/local/tmp/hw4.log | head -10

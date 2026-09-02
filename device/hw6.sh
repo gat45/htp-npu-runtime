@@ -1,0 +1,1 @@
+tail -12 /data/local/tmp/hw4.log
